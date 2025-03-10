@@ -1,0 +1,230 @@
+---
+title: "Incidencemodel"
+author: "Anna Frühauf"
+date: "2024-11-22"
+output: html_document
+---
+
+# libraries
+```{r}
+options(java.parameters = "-Xmx24G" )
+library (sf) 
+library(terra)
+library(here)
+library (dismo)
+library (rgeoboundaries)
+library (ggplot2)
+library (sp)
+library (raster)
+library (rnaturalearth)
+library (rnaturalearthhires)
+library(rJava)
+set.seed (130824)
+```
+
+# load predictors
+```{r}
+stack_all <- rast (here ("outputs", "geo_proc", "XXX.tif"))
+plot (stack_all)
+```
+# load countries and prepare ras mask
+```{r}
+
+# Fetch country data for specific countries
+countries_1 <- ne_states(country = c("Bolivia", "Brazil", "Costa Rica", "Colombia", "Peru", "Guatemala", "Mexico"), returnclass = "sf")
+countries_2 <- ne_states(country = "Argentina", returnclass = "sf")
+countries_3 <- ne_states(country = c("Uruguay", "Venezuela", "Panama", "Nicaragua", "Honduras", "Belize", "El Salvador", "Trinidad and Tobago", "Suriname", "Chile", "Ecuador", "Guyana", "Paraguay"), returnclass = "sf")
+ 
+ 
+admin1 <- ne_states(returnclass = "sf")
+ 
+# Load France and filter for French Guiana
+countries_4 <- admin1 %>% filter(name %in% c("Guyane française"))
+ 
+# Extract specific territories and dependencies from admin1
+france_caribbean <- admin1 %>% filter(name %in% c("Guadeloupe", "Martinique", "Saint Barthélemy", "St. Martin"))
+netherlands_caribbean <- admin1 %>% filter(name %in% c("Aruba", "Curaçao", "Sint Maarten", "Bonaire", "St. Eustatius", "Saba"))
+uk_caribbean <- admin1 %>% filter(admin %in% c("Anguilla", "Bermuda", "British Virgin Islands", "Cayman Islands", "Montserrat", "Turks and Caicos Islands"))
+ 
+# US Caribbean territories
+us_caribbean <- admin1 %>% filter(admin %in% c("Puerto Rico", "United States Virgin Islands
+"))
+ 
+# Caribbean countries
+caribbean_countries <- admin1 %>% filter(admin %in% c("Antigua and Barbuda", "The Bahamas", "Barbados", "Cuba", "Dominica", "Dominican Republic",
+                                                "Grenada", "Haiti", "Jamaica", "Saint Kitts and Nevis", "Saint Lucia", 
+                                                "Saint Vincent and the Grenadines"
+                                               ))
+ 
+# Prepare data for binding by keeping only geometry and relevant columns
+prepare_data <- function(df) {
+  df %>% dplyr::select(geometry) %>% st_as_sf()
+}
+ 
+countries_1 <- prepare_data(countries_1)
+countries_2 <- prepare_data(countries_2)
+countries_3 <- prepare_data(countries_3)
+countries_4 <- prepare_data(countries_4)
+france_caribbean <- prepare_data(france_caribbean)
+netherlands_caribbean <- prepare_data(netherlands_caribbean)
+uk_caribbean <- prepare_data(uk_caribbean)
+us_caribbean <- prepare_data(us_caribbean)
+caribbean_countries <- prepare_data(caribbean_countries)
+ 
+# Combine all countries and territories
+countries_all <- bind_rows(
+  countries_1, countries_2, countries_3, countries_4,
+  france_caribbean, netherlands_caribbean, uk_caribbean, us_caribbean,
+  caribbean_countries
+)
+ 
+# Check the result
+plot(countries_all)
+ 
+countries_all <- st_make_valid (countries_all)
+countries_all_fixed <- countries_all |>
+  st_union() %>%
+  vect() %>%
+  terra::fillHoles()
+ 
+```
+
+```{r}
+ras_mask <- rast(extent = st_bbox(countries_all_fixed), 
+                 resolution =0.01,
+                 crs = "EPSG:4326")
+
+
+ras_mask <- rasterize(countries_all_fixed, ras_mask, field = 1, background = NA)
+
+plot (ras_mask)
+ras_mask
+```
+
+# prepare inicidence data
+```{r}
+cases_sf <- st_as_sf(cases, wkt = "WKT", crs = 4326)
+plot (cases_sf)
+```
+
+#assign GPS coordinate
+```{r}
+# Function to generate random points within a polygon
+generate_random_points <- function(polygon, n, crs) {
+  if (n > 0) {
+    points <- st_sample(polygon, size = n, type = "random")
+    points <- st_set_crs(points, crs)
+    
+    return(points)
+  } else {
+    return(st_sfc()) 
+  }
+}
+
+all_points <- list()
+
+
+for (i in seq_len(nrow(cases_sf))) {
+  polygon <- cases_sf$WKT[i]
+  n_points <- cases_sf$Rep_Cases_Sept[i]
+  
+  points <- generate_random_points(polygon, n_points, st_crs(cases_sf))
+  
+  # Check CRS 
+  if (st_crs(points) != st_crs(cases_sf)) {
+    points <- st_set_crs(points, st_crs(cases_sf))
+  }
+  
+  all_points[[i]] <- points
+}
+
+all_points <- lapply(all_points, function(x) {
+  if (st_crs(x) != st_crs(cases_sf)) {
+    st_set_crs(x, st_crs(cases_sf))
+  } else {
+    x
+  }
+})
+
+points_sf <- do.call(c, all_points)
+
+#plot results to check accuracy (e.g. using plot function/ or leaflet package)
+```
+
+
+## bias file
+
+```{r}
+poins_c <- st_crop(points_sf %>% st_transform(crs(ras_mask)), ras_mask)
+
+cases_sf_buff <- st_buffer(poins_c , 50000)
+
+cases_sf_buff$zz <- 1
+
+
+background_ras <- rasterize(x = cases_sf_buff, y = ras_mask,
+                            background = 0.01, field = "zz")
+
+
+background_ras_m <- mask(background_ras, ras_mask)
+
+
+#plot results to check accuracy (e.g. using plot function/ or leaflet package)
+
+```
+
+
+## generate background points
+```{r}
+bg_pts <- dismo::randomPoints(p = st_coordinates(points_sf),
+                            mask = raster::raster(background_ras_m),
+                            n = nrow(points_sf)*10,
+                            prob = TRUE)
+
+#plot results to check accuracy (e.g. using plot function/ or leaflet package)
+
+```
+
+
+```{r}
+
+ras_stack_all <- raster::stack(stack_all)
+xm_nam <- paste0("xm_", Sys.Date())
+
+dir.create(file.path(here("outputs", xm_nam)), showWarnings = FALSE)
+xm <- maxent(x = ras_stack_all, 
+                  p = st_coordinates (points_sf),
+                  a = bg_pts,
+                  path =file.path(here("outputs", xm_nam)),
+                    args = c("replicates=10", "outputformat=logistic","responsecurves", "writeplotdata","-J"), factors = c ("deforestation"))
+
+
+```
+
+```{r}
+saveRDS(xm, here("outputs",  "XXX", paste0(xm_nam,".rds")))
+```
+
+
+## run prediction
+```{r}
+
+ras_stack_all <- raster::stack(stack_all)
+preds <- dismo::predict(object = xm,
+                        x = ras_stack_all,
+                        na.rm = TRUE,
+                        progress = "text")
+
+
+preds_mean <- rast(mean(preds))
+
+
+#plot results to check accuracy (e.g. using plot function/ or leaflet package)
+
+```
+
+## save
+
+```{r}
+saveRDS(preds_mean, here("outputs",  "XXX", "prediction.rds"))
+```

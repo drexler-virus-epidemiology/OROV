@@ -1,0 +1,213 @@
+---
+title: "GLMM_analyses"
+author: "Anna Frühauf"
+date: "2024-11-22"
+output: html_document
+---
+
+#libraries
+```{r}
+library(glmmTMB)
+library (here)
+library(car)
+library(emmeans)
+library (dplyr)
+library (ggplot2)
+library(RColorBrewer)
+library(cowplot)
+library(rstatix)
+library (broom)
+library (terra)
+library (raster)
+library(sf)  # For handling spatial data
+library(stringr)  # For string manipulation
+library(MuMIn)
+library (stargazer)
+```
+
+# load data
+
+
+```{r}
+df <- reaadRDS (here ("data_raw", "sample_raw", "XXX.rds"))
+```
+
+
+# full Model
+
+```{r}
+# ensure to work with a complete case dataset (no missing data)
+full_model  <- glmmTMB(OROV_dummy ~ Sex*cohort_type +  Age*cohort_type + Collection_Year + 
+                           bio3_isothermality + bio17_precip_dry_q +
+                           distance_to_city + evergreen_broad_lc +
+                           (1 |Cohort) ,
+                         family = binomial(link = "logit"), 
+                         data = df, na.action = "na.fail")
+
+summary (full_model)
+```
+
+## run MumIN to find best fitted model
+
+
+```{r}
+
+model_candidates <- MuMIn::dredge(full_model)
+write.xlsx (model_candidates, here ("XXX"))
+
+```
+
+# selected best fitted model: analysis & graphical outputs
+```{r}
+# ensure to work with a complete case dataset (no missing data)
+interaction_model <-  glmmTMB(OROV_dummy ~ Age*cohort_type + Sex*cohort_type +
+                     bio3_isothermality  + bio17_precip_dry_q + evergreen_broad_lc +
+                           distance_to_city +
+                           (1 |Cohort), data = df, family = binomial(link = "logit"))
+
+summary (interaction_model)
+```
+
+```{r}
+
+predictions_age <- ggpredict(interaction_model, terms = c("Age", "cohort_type"))
+
+prediction_age_plot <- plot(predictions_age)
+
+
+prediction_age_plot <- plot(predictions_age) +
+  labs(
+    y = "Predicted probability of being OROV-seropositive", 
+    title = "",  # Remove the plot title
+    color = ""   # Legend title for color (lines)
+  ) +
+  theme_classic() +  
+  theme(
+    text = element_text(family = "Segoe UI"), 
+    legend.position = c(0.5, 0.95), 
+    legend.justification = c("center", "top"), 
+    legend.direction = "horizontal",  
+    legend.background = element_rect(fill = "white", color = "black", size = 0.5),  
+    legend.margin = margin(3, 3, 3, 3) 
+  ) +
+  scale_color_manual(
+    values = c(
+      "healthy_individuals" = "#1f77b4", 
+      "febrile" = "#2ca02c",        
+      "census" = "#ff7f0e"         
+    ),
+    labels = c(
+      "healthy_individuals" = "Healthy individuals",
+      "febrile" = "Febrile",
+      "census" = "Census-based"
+    )
+  ) +
+  guides(fill = "none")  
+
+
+
+prediction_age_plot
+
+```
+
+```{r}
+prediction_sex <- ggpredict(interaction_model, terms = c("Sex", "cohort_type"))
+
+prediction_sex_plot <- plot (prediction_sex)
+
+prediction_sex_plot <- prediction_sex_plot +
+  labs(
+    y = "Predicted probability of being OROV-seropositive",
+    title = "",  
+    color = ""  
+  ) +
+  scale_x_continuous(
+    breaks = c(0, 1), labels = c("Female", "Male"),
+    limits = c(-0.5, 1.5),  
+    expand = expansion(mult = c(0, 0)) 
+  ) +
+  theme_classic() + 
+  theme(
+    text = element_text(family = "Segoe UI"),  
+    axis.text.x = element_text(size = 12), 
+    axis.ticks.x = element_line(size = 0.5),  
+    panel.grid.major.x = element_blank(),  
+    panel.grid.minor.x = element_blank(),  
+    legend.position = c(0.5, 0.95), 
+    legend.justification = c("center", "top"), 
+    legend.direction = "horizontal",
+    legend.background = element_rect(fill = "white", color = "black", size = 0.5),  
+    legend.margin = margin(3, 3, 3, 3)  
+  ) +
+  coord_cartesian(xlim = c(-0.5, 1.5)) +  
+   scale_color_manual(
+    values = c(
+      "healthy_individuals" = "#1f77b4", 
+      "febrile" = "#2ca02c",        
+      "census" = "#ff7f0e"         
+    ),
+    labels = c(
+      "healthy_individuals" = "Healthy individuals",
+      "febrile" = "Febrile",
+      "census" = "Census-based"
+    )
+  ) +
+  guides(fill = "none")  
+
+```
+
+
+```{r}
+re <- ranef(interaction_model)
+ 
+dd <- as.data.frame(re) 
+
+country_colors <- c(
+  "Brazil" = "#FF6F61",
+  "Colombia" = "#6B5B95",
+  "Costa Rica" = "#006400",
+  "Ecuador" = "#F7CAC9",
+  "Peru" = "#92A8D1",
+  "Bolivia" = "#955251"
+)
+
+cohort_plot <- ggplot(dd, aes(
+  y = grp,
+  x = condval,
+  color = case_when(  
+    str_detect(grp, "BRA") ~ "Brazil",
+    str_detect(grp, "COL") ~ "Colombia",
+    str_detect(grp, "CR") ~ "Costa Rica",
+    str_detect(grp, "ECU") ~ "Ecuador",
+    str_detect(grp, "PER") ~ "Peru",
+    str_detect(grp, "BOL") ~ "Bolivia",
+    TRUE ~ "Other"
+  )
+)) +
+  geom_point(size = 3) +
+  geom_errorbarh(aes(xmin = condval - 2 * condsd, xmax = condval + 2 * condsd), height = 0, size = 1) +
+  geom_vline(xintercept = 0, color = 'black', linetype = "dashed") +
+  scale_y_discrete(expand = c(0.05, 0)) +
+  scale_color_manual(values = country_colors) + 
+  labs(x = "Conditional Effect", y = "Cohort", color = "Country") +
+  theme_classic() +
+  theme(
+    text = element_text(family = "Segoe UI"),
+    plot.title = element_blank(),
+    axis.title.x = element_text(size = 12),
+    axis.title.y = element_text(size = 12),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 10),
+    legend.position = c(0.05, 0.95),  # Legend at the top-left inside the plot
+    legend.justification = c("left", "top"),  # Align legend to top-left corner
+    legend.background = element_rect(fill = "white", color = "black", size = 0.5),  # Add background for better visibility
+    legend.margin = margin(5, 5, 5, 5)  # Adjust margin inside the legend box
+  )
+
+
+
+
+```
+
+
+

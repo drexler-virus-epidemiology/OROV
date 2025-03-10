@@ -1,0 +1,303 @@
+---
+title: "preparing_ras_stack"
+output: html_document
+date: "2024-11-21"
+---
+# libraries
+```{r}
+options(java.parameters = "-Xmx24G" )
+library (sf) 
+library(terra)
+library(here)
+library (dismo)
+library (rgeoboundaries)
+library (ggplot2)
+library (sp)
+library (raster)
+library (rnaturalearth)
+library (rnaturalearthhires)
+library(rJava)
+set.seed (130824)
+```
+
+# prepare raster stack
+## load countries and prepare ras mask
+```{r}
+
+# Fetch country data for specific countries
+countries_1 <- ne_states(country = c("Bolivia", "Brazil", "Costa Rica", "Colombia", "Peru", "Guatemala", "Mexico"), returnclass = "sf")
+countries_2 <- ne_states(country = "Argentina", returnclass = "sf")
+countries_3 <- ne_states(country = c("Uruguay", "Venezuela", "Panama", "Nicaragua", "Honduras", "Belize", "El Salvador", "Trinidad and Tobago", "Suriname", "Chile", "Ecuador", "Guyana", "Paraguay"), returnclass = "sf")
+ 
+ 
+admin1 <- ne_states(returnclass = "sf")
+ 
+# Load France and filter for French Guiana
+countries_4 <- admin1 %>% filter(name %in% c("Guyane française"))
+ 
+# Extract specific territories and dependencies from admin1
+france_caribbean <- admin1 %>% filter(name %in% c("Guadeloupe", "Martinique", "Saint Barthélemy", "St. Martin"))
+netherlands_caribbean <- admin1 %>% filter(name %in% c("Aruba", "Curaçao", "Sint Maarten", "Bonaire", "St. Eustatius", "Saba"))
+uk_caribbean <- admin1 %>% filter(admin %in% c("Anguilla", "Bermuda", "British Virgin Islands", "Cayman Islands", "Montserrat", "Turks and Caicos Islands"))
+ 
+# US Caribbean territories
+us_caribbean <- admin1 %>% filter(admin %in% c("Puerto Rico", "United States Virgin Islands
+"))
+ 
+# Caribbean countries
+caribbean_countries <- admin1 %>% filter(admin %in% c("Antigua and Barbuda", "The Bahamas", "Barbados", "Cuba", "Dominica", "Dominican Republic",
+                                                "Grenada", "Haiti", "Jamaica", "Saint Kitts and Nevis", "Saint Lucia", 
+                                                "Saint Vincent and the Grenadines"
+                                               ))
+ 
+# Prepare data for binding by keeping only geometry and relevant columns
+prepare_data <- function(df) {
+  df %>% dplyr::select(geometry) %>% st_as_sf()
+}
+ 
+countries_1 <- prepare_data(countries_1)
+countries_2 <- prepare_data(countries_2)
+countries_3 <- prepare_data(countries_3)
+countries_4 <- prepare_data(countries_4)
+france_caribbean <- prepare_data(france_caribbean)
+netherlands_caribbean <- prepare_data(netherlands_caribbean)
+uk_caribbean <- prepare_data(uk_caribbean)
+us_caribbean <- prepare_data(us_caribbean)
+caribbean_countries <- prepare_data(caribbean_countries)
+ 
+# Combine all countries and territories
+countries_all <- bind_rows(
+  countries_1, countries_2, countries_3, countries_4,
+  france_caribbean, netherlands_caribbean, uk_caribbean, us_caribbean,
+  caribbean_countries
+)
+ 
+# Check the result
+plot(countries_all)
+ 
+countries_all <- st_make_valid (countries_all)
+countries_all_fixed <- countries_all |>
+  st_union() %>%
+  vect() %>%
+  terra::fillHoles()
+ 
+
+```
+
+```{r}
+ras_mask <- rast(extent = st_bbox(countries_all_fixed), 
+                 resolution =0.01,
+                 crs = "EPSG:4326")
+
+
+ras_mask <- rasterize(countries_all_fixed, ras_mask, field = 1, background = NA)
+
+plot (ras_mask)
+ras_mask
+```
+
+## load raster data (adjust here for different years/climate projections)
+###bio13_precip_wet_m
+```{r}
+
+bio13_precip_wet_m <- rast (here("outputs", "geo_proc", "chelsa_bio_13.tif"))
+
+bio13_precip_wet_m_moll <- project(bio13_precip_wet_m,
+                                ras_mask)
+
+bio13_precip_wet_m_moll_m <- mask(bio13_precip_wet_m_moll, ras_mask)
+```
+
+
+
+###bio3_isothermality
+```{r}
+bio3_isothermality <-  rast (here("outputs", "geo_proc", "chelsa_bio_03.tif"))
+
+bio3_isothermality <- bio3_isothermality/10
+
+bio3_isothermality_moll <- project(bio3_isothermality,
+                                ras_mask)
+
+bio3_isothermality_moll_m <- mask(bio3_isothermality_moll, ras_mask)
+```
+
+
+##bio15_precipitation_seasonality
+```{r}
+bio15_precipitation_seasonality <-  rast (here("outputs", "geo_proc", "chelsa_bio_15.tif"))
+
+bio15_precipitation_seasonality_moll <- project(bio15_precipitation_seasonality,
+                                ras_mask)
+
+bio15_precipitation_seasonality_moll_m <- mask(bio15_precipitation_seasonality_moll, ras_mask)
+
+plot (bio15_precipitation_seasonality) # check
+plot (bio15_precipitation_seasonality_moll_m) #check
+```
+
+
+###bio5_max_temp_warm_m
+```{r}
+bio5_max_temp_warm_m <- rast (here("outputs", "geo_proc", "chelsa_bio_05.tif"))
+bio5_max_temp_warm_m <- bio5_max_temp_warm_m/10
+
+bio5_max_temp_warm_m_moll <- project(bio5_max_temp_warm_m,
+                                ras_mask)
+
+bio5_max_temp_warm_m_moll_m <- mask(bio5_max_temp_warm_m_moll, ras_mask)
+```
+
+###bio17_precip_dry_q
+```{r}
+bio17_precip_dry_q <-  rast (here("outputs", "geo_proc", "chelsa_bio_17.tif"))
+
+bio17_precip_dry_q_moll <- project(bio17_precip_dry_q,
+                                ras_mask)
+
+bio17_precip_dry_q_moll_m <- mask(bio17_precip_dry_q_moll, ras_mask)
+```
+
+###bio6_min_temp_cold_m
+```{r}
+
+bio6_min_temp_cold_m <-  rast (here("outputs", "geo_proc", "chelsa_bio_06.tif"))
+bio6_min_temp_cold_m <- bio6_min_temp_cold_m/10
+
+bio6_min_temp_cold_m_moll <- project(bio6_min_temp_cold_m,
+                                ras_mask)
+
+bio6_min_temp_cold_m_moll_m <- mask(bio6_min_temp_cold_m_moll, ras_mask)
+```
+
+
+
+###evergreen_broad_lc
+
+```{r}
+evergreen_broad_lc <- rast (here("data_raw", "geo_raw", "consensus_full_class_2.tif"))
+
+evergreen_broad_lc_moll <- project(evergreen_broad_lc,
+                                ras_mask)
+
+evergreen_broad_lc_moll_m <- mask(evergreen_broad_lc_moll, ras_mask)
+```
+
+
+###cultivated_lc 
+
+```{r}
+cultivated_lc <- rast (here("data_raw", "geo_raw", "consensus_full_class_7.tif"))
+
+cultivated_lc_moll <- project(cultivated_lc,
+                                ras_mask)
+
+cultivated_lc_moll_m <- mask(cultivated_lc_moll, ras_mask)
+```
+
+
+###pop_dens
+
+```{r}
+pop_dens <- rast (here("data_raw", "geo_raw", "gpw_v4_population_density_rev11_2015_30_sec.tif"))
+
+pop_dens_moll <- project(pop_dens,
+                                ras_mask)
+
+pop_dens_moll_m <- mask(pop_dens_moll, ras_mask)
+
+```
+
+###hfp
+
+```{r}
+hfp <- rast (here("data_raw", "geo_raw", "hf_v2geo", "hdr.adf"))
+hfp
+
+hfp_moll <- project(hfp,
+                                ras_mask)
+hfp_moll_m <- mask(hfp_moll, ras_mask)
+```
+
+
+### evi
+
+```{r}
+evi <- rast (here("data_raw", "geo_raw", "evi_world_4326", "evi.tif"))
+evi_moll <- project(evi,ras_mask)
+evi_moll_m <- mask(evi_moll, ras_mask)
+plot (evi_moll_m)
+
+```
+
+###altitude
+```{r}
+altitude <- rast (here("data_raw", "geo_raw", "wc2.1_30s_elev.tif"))
+
+
+
+altitude_moll <- project(altitude,
+                                ras_mask)
+altitude_moll_m <- mask(altitude_moll, ras_mask)
+```
+
+
+### deforestation 
+
+```{r}
+deforestation <- rast (here("outputs", "geo_proc", "deforestation2001_2022.tif"))
+
+deforestation <- as.factor (deforestation)
+
+```
+
+```{r}
+deforestation_moll <- project(deforestation,
+                                ras_mask)
+deforestation_moll_m <- mask(deforestation_moll, ras_mask)
+```
+
+### distance_to_cities
+
+```{r}
+distance_to_cities <- rast (here("outputs", "geo_proc", "distance_pop_count_above_5000p_crop_2020_1km_4326.tif"))
+distance_to_cities_moll <- project(distance_to_cities,
+                                ras_mask)
+distance_to_cities_moll_m <- mask(distance_to_cities_moll, ras_mask)
+
+```
+
+
+## stack
+```{r}
+stack_all <- c(bio13_precip_wet_m_moll_m, bio3_isothermality_moll_m, 
+               bio5_max_temp_warm_m_moll_m, bio17_precip_dry_q_moll_m,bio15_precipitation_seasonality_moll_m,
+               bio6_min_temp_cold_m_moll_m, evergreen_broad_lc_moll_m,   cultivated_lc_moll_m, 
+pop_dens_moll_m,  hfp_moll_m, evi_moll_m, 
+altitude_moll_m, deforestation_moll_m, distance_to_cities_moll_m)
+
+
+
+```
+
+```{r}
+names(stack_all) <-c("bio13_precip_wet_m",
+"bio3_isothermality",
+"bio5_max_temp_warm_m",
+"bio17_precip_dry_q",
+"bio15_precipitation_seasonality",
+"bio6_min_temp_cold_m",
+"evergreen_broad_lc",
+"cultivated_lc",
+"pop_dens",
+"hfp",
+"evi",
+"altitude", "deforestation", "distance_to_cities")
+
+plot (stack_all)
+```
+
+## write Raster for later modelling
+```{r}
+writeRaster(stack_all,here ("outputs", "geo_proc", "rasterXXX"))
+```

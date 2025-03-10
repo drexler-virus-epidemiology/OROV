@@ -1,0 +1,87 @@
+---
+title: "SeroModel"
+output: html_document
+date: "2024-11-21"
+---
+
+# libraries
+```{r}
+options(java.parameters = "-Xmx24G" )
+library (sf) 
+library(terra)
+library(here)
+library (dismo)
+library (rgeoboundaries)
+library (ggplot2)
+library (sp)
+library (raster)
+library (rnaturalearth)
+library (rnaturalearthhires)
+library(rJava)
+set.seed (130824)
+```
+
+# load predictors
+```{r}
+stack_all <- rast (here ("outputs", "geo_proc", "XXX.tif"))
+plot (stack_all)
+```
+
+# load and prepare data
+```{r}
+data  <- read.csv (here ("data_raw", "sample_raw", "XXX.csv"))
+View (data)
+```
+
+
+```{r}
+cases <- data %>%
+  filter (OROV_dummy==1)%>%
+  dplyr::select (GPS_coordinates.X, GPS_coordinates.Y)
+
+
+neg <- data %>%
+  filter (OROV_dummy==0)%>%
+  dplyr::select (GPS_coordinates.X, GPS_coordinates.Y)
+
+```
+# run and save maxent
+```{r}
+
+ras_stack_all <- raster::stack(stack_all)
+xm_nam <- paste0("xm_", Sys.Date())
+
+dir.create(file.path(here("outputs", xm_nam)), showWarnings = FALSE)
+xm <- maxent(x = ras_stack_all, 
+                  p = cases,
+                  a = neg,
+                  path =file.path(here("outputs", xm_nam)),
+                    args = c("replicates=10", "outputformat=logistic","responsecurves", "writeplotdata", "-J"), factors = c ("deforestation"))
+
+
+```
+
+
+```{r}
+saveRDS(xm, here("outputs",  "XXX", paste0(xm_nam,".rds")))
+```
+
+# run predictions with model
+```{r}
+
+ras_stack_all <- raster::stack(stack_all)
+preds <- dismo::predict(object = xm,
+                        x = ras_stack_all,
+                        na.rm = TRUE,
+                        progress = "text")
+
+
+preds_mean <- rast(mean(preds))
+
+```
+
+## save
+
+```{r}
+saveRDS(preds_mean, here("outputs",  "XXX", "prediction.rds"))
+```
